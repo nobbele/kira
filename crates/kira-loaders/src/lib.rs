@@ -77,14 +77,13 @@ mod streaming;
 
 use kira::{
 	dsp::Frame,
-	sound::static_sound::{StaticSoundData, StaticSoundSettings},
+	sound::static_sound::{Samples, StaticSoundData, StaticSoundSettings},
 };
 pub use streaming::*;
 use symphonia::core::{
-	audio::{AudioBuffer, AudioBufferRef, Signal},
-	conv::{FromSample, IntoSample},
+	audio::{AudioBufferRef, Signal},
+	conv::IntoSample,
 	io::MediaSourceStream,
-	sample::Sample,
 };
 
 use std::{fmt::Display, fs::File, path::Path, sync::Arc};
@@ -167,12 +166,12 @@ pub fn load(
 		.codec_params;
 	let sample_rate = codec_params.sample_rate.ok_or(Error::UnknownSampleRate)?;
 	let mut decoder = codecs.make(codec_params, &Default::default())?;
-	let mut frames = vec![];
+	let mut samples = Samples::I16Mono(vec![]);
 	loop {
 		match format_reader.next_packet() {
 			Ok(packet) => {
 				let buffer = decoder.decode(&packet)?;
-				load_frames_from_buffer_ref(&mut frames, &buffer)?;
+				samples = load_samples_from_buffer_ref(samples, &buffer)?;
 			}
 			Err(error) => match error {
 				symphonia::core::errors::Error::IoError(error) => {
@@ -187,7 +186,7 @@ pub fn load(
 	}
 	Ok(StaticSoundData {
 		sample_rate,
-		frames: Arc::new(frames),
+		samples: Arc::new(samples),
 		settings,
 	})
 }
@@ -200,43 +199,293 @@ pub fn stream(
 	StreamingSoundData::new(path, settings)
 }
 
-fn load_frames_from_buffer_ref(
-	frames: &mut Vec<Frame>,
+fn load_samples_from_buffer_ref(
+	mut samples: Samples,
 	buffer: &AudioBufferRef,
-) -> Result<(), Error> {
+) -> Result<Samples, Error> {
 	match buffer {
-		AudioBufferRef::U8(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::U16(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::U24(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::U32(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::S8(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::S16(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::S24(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::S32(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::F32(buffer) => load_frames_from_buffer(frames, buffer),
-		AudioBufferRef::F64(buffer) => load_frames_from_buffer(frames, buffer),
-	}
-}
-
-fn load_frames_from_buffer<S: Sample>(
-	frames: &mut Vec<Frame>,
-	buffer: &AudioBuffer<S>,
-) -> Result<(), Error>
-where
-	f32: FromSample<S>,
-{
-	match buffer.spec().channels.count() {
-		1 => {
-			for sample in buffer.chan(0) {
-				frames.push(Frame::from_mono((*sample).into_sample()));
+		AudioBufferRef::U8(buffer) => match buffer.spec().channels.count() {
+			1 => {
+				for sample in buffer.chan(0) {
+					match &mut samples {
+						Samples::I16Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::I16Stereo(samples) => {
+							samples.push([(*sample).into_sample(), (*sample).into_sample()])
+						}
+						Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::Frame(samples) => {
+							samples.push(Frame::from_mono((*sample).into_sample()))
+						}
+					}
+				}
+			}
+			2 => {
+				samples = samples.ensure_stereo();
+				for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+					match &mut samples {
+						Samples::I16Stereo(samples) => {
+							samples.push([(*left).into_sample(), (*right).into_sample()])
+						}
+						Samples::Frame(samples) => {
+							samples.push(Frame::new((*left).into_sample(), (*right).into_sample()))
+						}
+						_ => unreachable!(),
+					}
+				}
+			}
+			_ => return Err(Error::UnsupportedChannelConfiguration),
+		},
+		AudioBufferRef::U16(buffer) => match buffer.spec().channels.count() {
+			1 => {
+				for sample in buffer.chan(0) {
+					match &mut samples {
+						Samples::I16Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::I16Stereo(samples) => {
+							samples.push([(*sample).into_sample(), (*sample).into_sample()])
+						}
+						Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::Frame(samples) => {
+							samples.push(Frame::from_mono((*sample).into_sample()))
+						}
+					}
+				}
+			}
+			2 => {
+				samples = samples.ensure_stereo();
+				for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+					match &mut samples {
+						Samples::I16Stereo(samples) => {
+							samples.push([(*left).into_sample(), (*right).into_sample()])
+						}
+						Samples::Frame(samples) => {
+							samples.push(Frame::new((*left).into_sample(), (*right).into_sample()))
+						}
+						_ => unreachable!(),
+					}
+				}
+			}
+			_ => return Err(Error::UnsupportedChannelConfiguration),
+		},
+		AudioBufferRef::U24(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
 			}
 		}
-		2 => {
-			for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
-				frames.push(Frame::new((*left).into_sample(), (*right).into_sample()));
+		AudioBufferRef::U32(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
 			}
 		}
-		_ => return Err(Error::UnsupportedChannelConfiguration),
+		AudioBufferRef::S8(buffer) => match buffer.spec().channels.count() {
+			1 => {
+				for sample in buffer.chan(0) {
+					match &mut samples {
+						Samples::I16Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::I16Stereo(samples) => {
+							samples.push([(*sample).into_sample(), (*sample).into_sample()])
+						}
+						Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::Frame(samples) => {
+							samples.push(Frame::from_mono((*sample).into_sample()))
+						}
+					}
+				}
+			}
+			2 => {
+				samples = samples.ensure_stereo();
+				for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+					match &mut samples {
+						Samples::I16Stereo(samples) => {
+							samples.push([(*left).into_sample(), (*right).into_sample()])
+						}
+						Samples::Frame(samples) => {
+							samples.push(Frame::new((*left).into_sample(), (*right).into_sample()))
+						}
+						_ => unreachable!(),
+					}
+				}
+			}
+			_ => return Err(Error::UnsupportedChannelConfiguration),
+		},
+		AudioBufferRef::S16(buffer) => match buffer.spec().channels.count() {
+			1 => {
+				for sample in buffer.chan(0) {
+					match &mut samples {
+						Samples::I16Mono(samples) => samples.push(*sample),
+						Samples::I16Stereo(samples) => samples.push([*sample, *sample]),
+						Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+						Samples::Frame(samples) => {
+							samples.push(Frame::from_mono((*sample).into_sample()))
+						}
+					}
+				}
+			}
+			2 => {
+				samples = samples.ensure_stereo();
+				for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+					match &mut samples {
+						Samples::I16Stereo(samples) => samples.push([*left, *right]),
+						Samples::Frame(samples) => {
+							samples.push(Frame::new((*left).into_sample(), (*right).into_sample()))
+						}
+						_ => unreachable!(),
+					}
+				}
+			}
+			_ => return Err(Error::UnsupportedChannelConfiguration),
+		},
+		AudioBufferRef::S24(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
+			}
+		}
+		AudioBufferRef::S32(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
+			}
+		}
+		AudioBufferRef::F32(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
+			}
+		}
+		AudioBufferRef::F64(buffer) => {
+			samples = samples.ensure_32_bit();
+			match buffer.spec().channels.count() {
+				1 => {
+					for sample in buffer.chan(0) {
+						match &mut samples {
+							Samples::F32Mono(samples) => samples.push((*sample).into_sample()),
+							Samples::Frame(samples) => {
+								samples.push(Frame::from_mono((*sample).into_sample()))
+							}
+							_ => unreachable!(),
+						}
+					}
+				}
+				2 => {
+					samples = samples.ensure_stereo();
+					for (left, right) in buffer.chan(0).iter().zip(buffer.chan(1).iter()) {
+						match &mut samples {
+							Samples::Frame(samples) => samples
+								.push(Frame::new((*left).into_sample(), (*right).into_sample())),
+							_ => unreachable!(),
+						}
+					}
+				}
+				_ => return Err(Error::UnsupportedChannelConfiguration),
+			}
+		}
 	}
-	Ok(())
+	Ok(samples)
 }

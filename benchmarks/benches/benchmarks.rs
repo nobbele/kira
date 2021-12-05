@@ -4,21 +4,21 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use kira::{
 	dsp::Frame,
 	manager::{backend::MockBackend, AudioManager, AudioManagerSettings},
-	sound::static_sound::{StaticSoundData, StaticSoundSettings},
+	sound::static_sound::{Samples, StaticSoundData, StaticSoundSettings},
 	LoopBehavior,
 };
 
 fn create_test_sound(num_samples: usize) -> StaticSoundData {
 	const SAMPLE_RATE: u32 = 48_000;
-	let mut frames = vec![];
+	let mut samples = vec![];
 	let mut phase = 0.0;
 	for _ in 0..num_samples {
-		frames.push(Frame::from_mono((phase * TAU).sin()));
+		samples.push(Frame::from_mono((phase * TAU).sin()));
 		phase += 440.0 / SAMPLE_RATE as f32;
 	}
 	StaticSoundData {
 		sample_rate: SAMPLE_RATE,
-		frames: Arc::new(frames),
+		samples: Arc::new(Samples::Frame(samples)),
 		settings: StaticSoundSettings::new().loop_behavior(LoopBehavior {
 			start_position: 0.0,
 		}),
