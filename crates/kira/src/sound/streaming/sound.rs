@@ -12,9 +12,8 @@ use crate::{
 	clock::ClockTime,
 	dsp::{interpolate_frame, Frame},
 	sound::{static_sound::PlaybackState, Sound},
-	track::TrackId,
 	tween::{Tween, Tweener},
-	PlaybackRate, StartTime, Volume,
+	OutputDestination, PlaybackRate, StartTime, Volume,
 };
 use ringbuf::Consumer;
 
@@ -48,7 +47,7 @@ pub(crate) struct StreamingSound {
 	command_consumer: Consumer<Command>,
 	sample_rate: u32,
 	scheduler_controller: DecodeSchedulerController,
-	track: TrackId,
+	output_destination: OutputDestination,
 	start_time: StartTime,
 	state: PlaybackState,
 	volume_fade: Tweener<Volume>,
@@ -74,7 +73,7 @@ impl StreamingSound {
 			command_consumer,
 			sample_rate,
 			scheduler_controller,
-			track: settings.track,
+			output_destination: settings.output_destination,
 			start_time: settings.start_time,
 			state: PlaybackState::Playing,
 			volume_fade: if let Some(tween) = settings.fade_in_tween {
@@ -163,8 +162,8 @@ impl StreamingSound {
 }
 
 impl Sound for StreamingSound {
-	fn track(&mut self) -> TrackId {
-		self.track
+	fn output_destination(&mut self) -> OutputDestination {
+		self.output_destination
 	}
 
 	fn on_start_processing(&mut self) {

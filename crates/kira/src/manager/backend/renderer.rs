@@ -124,9 +124,12 @@ impl Renderer {
 				self.resources.mixer.on_clock_tick(*time);
 			}
 		}
-		self.resources
-			.sounds
-			.process(self.dt, &mut self.resources.mixer);
+		self.resources.sounds.process(
+			self.dt,
+			&mut self.resources.mixer,
+			&mut self.resources.spatial_scenes,
+		);
+		self.resources.spatial_scenes.process();
 		let out = self.resources.mixer.process(self.dt);
 		out * self.fade_volume.value().as_amplitude() as f32
 	}

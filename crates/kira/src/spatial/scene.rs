@@ -56,6 +56,10 @@ impl SpatialScene {
 		self.listeners.controller()
 	}
 
+	pub fn emitter_mut(&mut self, id: EmitterId) -> Option<&mut Emitter> {
+		self.emitters.get_mut(id.key)
+	}
+
 	pub fn on_start_processing(&mut self) {
 		self.remove_unused_emitters();
 		self.remove_unused_listeners();
@@ -92,6 +96,12 @@ impl SpatialScene {
 			if self.unused_listener_producer.is_full() {
 				return;
 			}
+		}
+	}
+
+	pub fn process(&mut self) {
+		for (_, emitter) in &mut self.emitters {
+			emitter.reset_input();
 		}
 	}
 
